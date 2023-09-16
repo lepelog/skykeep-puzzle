@@ -10,11 +10,10 @@ bitflags::bitflags! {
         const EARTH_TEMPLE = 1 << 1;
         const MINI_BOSS = 1 << 2;
         const FIRE_SANCTUARY = 1 << 3;
-        const NON_EMPTY = 1 << 4;
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Sequence)]
 pub enum Direction {
     Up,
     Left,
@@ -43,11 +42,22 @@ impl Direction {
 }
 
 #[derive(Debug, Sequence, Clone, Copy, PartialEq, Eq)]
-pub enum PuzzleMover {
+pub enum ControlPanel {
     Start,
     LanayruMiningFacility,
     EarthTemple,
     MiniBoss,
+}
+
+impl ControlPanel {
+    pub fn entrance(&self) -> Entrance {
+        match self {
+            ControlPanel::Start => Entrance::StartDown,
+            ControlPanel::LanayruMiningFacility => Entrance::LanayruMiningFacilityDown,
+            ControlPanel::EarthTemple => Entrance::EarthTempleDown,
+            ControlPanel::MiniBoss => Entrance::MiniBossLeft,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Sequence, Hash)]
@@ -88,30 +98,6 @@ pub fn do_move(tile: u8, direction: Direction) -> Option<(u8, Direction)> {
     }
 }
 
-// impl Room {
-//     pub fn directions(&self) -> Direction {
-//         match self {
-//             Room::Start => Direction::Right | Direction::Down,
-//             Room::Skyview => Direction::Left | Direction::Up,
-//             Room::EarthTemple => Direction::Right | Direction::Down,
-//             Room::LanayruMiningFacility => Direction::Down | Direction::Up,
-//             Room::MiniBoss => Direction::Left | Direction::Down,
-//             Room::AncientCistern => Direction::Right | Direction::Down,
-//             Room::FireSanctuary => Direction::Left | Direction::Right,
-//             Room::Sandship => Direction::Left,
-//             Room::Empty => Direction::empty(),
-//         }
-//     }
-// }
-
-// #[repr(align(16))]
-pub struct UniqueState {
-    rooms: [Room; 9],
-    pos_tile: u8,
-    pos_direction: Direction,
-    gates: OpenedGates,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RoomAndPos {
     rooms: [Room; 9],
@@ -121,14 +107,8 @@ pub struct RoomAndPos {
 
 #[derive(Debug, Sequence)]
 pub enum Operations {
-    ReachMoverStart,
-    ReachMoverLanayruMiningFacility,
-    ReachMoverEarthTemple,
-    ReachMoverMiniBoss,
-    MoveUp,
-    MoveLeft,
-    MoveDown,
-    MoveRight,
+    Reach(ControlPanel),
+    Move(Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Sequence, Hash)]
@@ -248,194 +228,168 @@ fn main() {
     rooms.shuffle(&mut rng);
 
     match verify_rooms(&rooms) {
-        Ok(()) => {
-            println!("possible: {:?}", rooms);
+        Ok((counter, max_depth, unreachable)) => {
+            if unreachable != 0 {
+                println!("{rooms:?};unreachable entrances;{counter};{max_depth};{unreachable}");
+            } else {
+                println!("{rooms:?};;{counter};{max_depth};{unreachable}");
+            }
         },
         Err(e) => {
-            println!("impossible ({}): {:?}", e, rooms);
+            println!("{rooms:?};{e};;;");
         }
     }
 }
 
-fn verify_rooms(rooms: &[Room; 9]) -> Result<(), &'static str> {
-    print_rooms(rooms);
+fn verify_rooms(rooms: &[Room; 9]) -> Result<(usize, usize, usize), &'static str> {
+    // print_rooms(rooms);
     // check that we can enter at all
-    let Some(entrance) = Entrance::from_room_direction(rooms[7], Direction::Down) else {
+    let Some(_) = Entrance::from_room_direction(rooms[7], Direction::Down) else {
         return Err("no down first room");
     };
-    println!("{:?}", entrance);
     // we need to find any control panel
-    let Some((panel, panel_tile)) = follow_chain(rooms, OpenedGates::empty(), 7, Direction::Down, &mut |entrance, tile| {
-        entrance.has_control_panel().then_some((entrance, tile))
+    let Some((panel_dir, panel_tile)) = follow_chain(rooms, OpenedGates::empty(), 7, Direction::Down, &mut |entrance, tile| {
+        entrance.has_control_panel().then_some((entrance.to_room_direction().1, tile))
     }) else {
         return Err("no control panel");
     };
-    println!("found panel {:?}", panel);
-
-    let mut gates = OpenedGates::NON_EMPTY;
-    // try to open gates
-    follow_chain::<()>(rooms, gates, 7, Direction::Down, &mut |e, _| {
-        if let Some(gate) = e.open_gate() {
-            gates |= gate;
-        }
-        None
-    });
 
     let mut state_to_gate: HashMap<RoomAndPos, OpenedGates> = HashMap::new();
 
-    let (room, dir) = panel.to_room_direction();
-    let pos_room = RoomAndPos {
+    let mut counter: usize = 0;
+    let mut max_depth = 0;
+    let mut unreachable_entrances: HashSet<Entrance> = enum_iterator::all::<Entrance>().collect();
+    let mut stash: Vec<(RoomAndPos, Operations)> = Vec::new();
+
+    let mut current_pos_room = RoomAndPos {
         pos_tile: panel_tile,
-        pos_direction: dir,
+        pos_direction: panel_dir,
         rooms: rooms.clone(),
     };
-
-    // state_to_gate.insert(pos_room, gates);
-
-    let mut counter = 0;
-    let mut unreachable_entrances: HashSet<Entrance> = enum_iterator::all::<Entrance>().collect();
-    let beatable = verify_rec(&mut state_to_gate, pos_room, gates, &mut counter, &mut unreachable_entrances);
-
-    println!("{counter}");
-    println!("beatable: {beatable}");
-
-    Ok(())
-}
-
-fn verify_norec(
-    state_to_gate: &mut HashMap<RoomAndPos, OpenedGates>,
-)
-
-fn verify_rec(
-    state_to_gate: &mut HashMap<RoomAndPos, OpenedGates>,
-    room_and_pos: RoomAndPos,
-    mut gates: OpenedGates,
-    counter: &mut usize,
-    unreachable_entrances: &mut HashSet<Entrance>,
-) -> bool {
-    *counter += 1;
-    // try to open gates
-    follow_chain::<()>(&room_and_pos.rooms, gates, 7, Direction::Down, &mut |e, _| {
-        if let Some(gate) = e.open_gate() {
-            gates |= gate;
-        }
-        unreachable_entrances.remove(&e);
-        None
-    });
-    if unreachable_entrances.is_empty() {
-        return true;
-    }
-    let gates = match state_to_gate.entry(room_and_pos.clone()) {
-        Entry::Occupied(current_gates) => {
-            if current_gates.get().contains(gates) {
-                return false;
+    
+    let mut current_operation: Operations = Operations::first().unwrap();
+    let mut current_gates = OpenedGates::empty();
+    let beatable = 'main_loop: loop {
+        max_depth = max_depth.max(stash.len());
+        counter += 1;
+        // if (counter % 10000) == 0 {
+        //     println!("{counter}, {}", state_to_gate.len());
+        //     print_rooms(&current_pos_room.rooms);
+        // }
+        // perform operation
+        // let mut new_pos_room = current_pos_room.clone();
+        let op_result = match current_operation {
+            Operations::Reach(panel) => {
+                let panel_entrance = panel.entrance();
+                if let Some(panel_tile) = follow_chain_both(&current_pos_room.rooms, current_gates, current_pos_room.pos_tile, current_pos_room.pos_direction, &mut |entrance, tile| {
+                    (panel_entrance == entrance).then_some(tile)
+                }) {
+                    Ok(RoomAndPos {
+                        rooms: current_pos_room.rooms.clone(),
+                        pos_direction: panel_entrance.to_room_direction().1,
+                        pos_tile: panel_tile,
+                    })
+                } else {
+                    Err(())
+                }
+            },
+            Operations::Move(direction) => {
+                // if we move up into the empty space, we swap with the tile that is down
+                let empty_tile = current_pos_room.rooms.iter().position(|r| r == &Room::Empty).unwrap() as u8;
+                if let Some((other_tile, _)) = do_move(empty_tile, direction) {
+                    if other_tile != current_pos_room.pos_tile {
+                        let mut rooms = current_pos_room.rooms.clone();
+                        rooms.swap(other_tile.into(), empty_tile.into());
+                        Ok(RoomAndPos { rooms, pos_tile: current_pos_room.pos_tile, pos_direction: current_pos_room.pos_direction })
+                    } else {
+                        Err(())
+                    }
+                } else {
+                    Err(())
+                }
+            },
+        };
+        match op_result {
+            // operation could be performed, see if this is a new state or if we can reach more gates now
+            Ok(new_room_pos) => {
+                // try to open gates and reach entrances
+                follow_chain_both::<()>(&new_room_pos.rooms, current_gates, new_room_pos.pos_tile, new_room_pos.pos_direction, &mut |e, _| {
+                    if let Some(gate) = e.open_gate() {
+                        current_gates |= gate;
+                    }
+                    unreachable_entrances.remove(&e);
+                    None
+                });
+                if unreachable_entrances.is_empty() {
+                    break true;
+                }
+                match state_to_gate.entry(new_room_pos.clone()) {
+                    Entry::Occupied(mut occupied) => {
+                        if occupied.get().contains(current_gates) {
+                            // we already found this state, with better gates
+                            // copied from err segment
+                            if let Some(nex_op) = current_operation.next() {
+                                current_operation = nex_op;
+                                continue 'main_loop;
+                            } else {
+                                while let Some((stack_room_pos, stack_op)) = stash.pop() {
+                                    if let Some(next_op) = stack_op.next() {
+                                        current_pos_room = stack_room_pos;
+                                        current_operation = next_op;
+                                        current_gates = state_to_gate.get(&current_pos_room).cloned().unwrap_or(OpenedGates::empty());
+                                        continue 'main_loop;
+                                    }
+                                }
+                                // we have reached the end of the stack
+                                break false;
+                            }
+                        } else {
+                            // we have better gates now, continue
+                            occupied.insert(current_gates);
+                        }
+                    },
+                    Entry::Vacant(vacant) => {
+                        vacant.insert(current_gates);
+                    }
+                }
+                // this is now our new state, push the current one to the stack and restart operation
+                stash.push((new_room_pos.clone(), current_operation));
+                current_operation = Operations::first().unwrap();
+                current_pos_room = new_room_pos;
+            },
+            // operation couldn't be performed, try the next one
+            // if there isn't one, pop one from the stack
+            // if there isn't one, we're done
+            Err(()) => {
+                if let Some(nex_op) = current_operation.next() {
+                    current_operation = nex_op;
+                    continue 'main_loop;
+                } else {
+                    while let Some((stack_room_pos, stack_op)) = stash.pop() {
+                        if let Some(next_op) = stack_op.next() {
+                            current_pos_room = stack_room_pos;
+                            current_operation = next_op;
+                            current_gates = state_to_gate.get(&current_pos_room).cloned().unwrap_or(OpenedGates::empty());
+                            continue 'main_loop;
+                        }
+                    }
+                    // we have reached the end of the stack
+                    break false;
+                }
             }
-            current_gates.get().clone()
-        },
-        Entry::Vacant(entry) => {
-            entry.insert(gates);
-            gates
         }
     };
-    let RoomAndPos { rooms, pos_tile, pos_direction } = room_and_pos;
-    // print_rooms(rooms);
-    for operation in enum_iterator::all::<Operations>() {
-        match operation {
-            Operations::ReachMoverStart => {
-                if let Some(panel_tile) = follow_chain_both(&rooms, gates, pos_tile, pos_direction, &mut |e, panel_tile| {
-                    (e == Entrance::StartDown).then_some(panel_tile)
-                }) {
-                    let new_room_pos = RoomAndPos { rooms, pos_tile: panel_tile, pos_direction: Direction::Down };
-                    if verify_rec(state_to_gate, new_room_pos, gates, counter, unreachable_entrances) {
-                        return true;
-                    }
-                }
-            },
-            Operations::ReachMoverLanayruMiningFacility => {
-                if let Some(panel_tile) = follow_chain_both(&rooms, gates, pos_tile, pos_direction, &mut |e, panel_tile| {
-                    (e == Entrance::LanayruMiningFacilityDown).then_some(panel_tile)
-                }) {
-                    let new_room_pos = RoomAndPos { rooms, pos_tile: panel_tile, pos_direction: Direction::Down };
-                    if verify_rec(state_to_gate, new_room_pos, gates, counter, unreachable_entrances) {
-                        return true;
-                    }
-                }
-            },
-            Operations::ReachMoverEarthTemple => {
-                if let Some(panel_tile) = follow_chain_both(&rooms, gates, pos_tile, pos_direction, &mut |e, panel_tile| {
-                    (e == Entrance::EarthTempleDown).then_some(panel_tile)
-                }) {
-                    let new_room_pos = RoomAndPos { rooms: rooms.clone(), pos_tile: panel_tile, pos_direction: Direction::Down };
-                    if verify_rec(state_to_gate, new_room_pos, gates, counter, unreachable_entrances) {
-                        return true;
-                    }
-                }
-            },
-            Operations::ReachMoverMiniBoss => {
-                if let Some(panel_tile) = follow_chain_both(&rooms, gates, pos_tile, pos_direction, &mut |e, panel_tile| {
-                    (e == Entrance::MiniBossLeft).then_some(panel_tile)
-                }) {
-                    let new_room_pos = RoomAndPos { rooms: rooms.clone(), pos_tile: panel_tile, pos_direction: Direction::Down };
-                    if verify_rec(state_to_gate, new_room_pos, gates, counter, unreachable_entrances) {
-                        return true;
-                    }
-                }
-            },
-            Operations::MoveUp => {
-                // if we move up into the empty space, we swap with the tile that is down
-                let empty_tile = rooms.iter().position(|r| r == &Room::Empty).unwrap() as u8;
-                if let Some((other_tile, _)) = do_move(empty_tile, Direction::Down) {
-                    if other_tile != pos_tile {
-                        let mut rooms = rooms.clone();
-                        rooms.swap(other_tile.into(), empty_tile.into());
-                        if verify_rec(state_to_gate, RoomAndPos { rooms, pos_tile, pos_direction }, gates, counter, unreachable_entrances) {
-                            return true;
-                        }
-                    }
-                }
-            },
-            Operations::MoveLeft => {
-                let empty_tile = rooms.iter().position(|r| r == &Room::Empty).unwrap() as u8;
-                if let Some((other_tile, _)) = do_move(empty_tile, Direction::Right) {
-                    if other_tile != pos_tile {
-                        let mut rooms = rooms.clone();
-                        rooms.swap(other_tile.into(), empty_tile.into());
-                        if verify_rec(state_to_gate, RoomAndPos { rooms, pos_tile, pos_direction }, gates, counter, unreachable_entrances) {
-                            return true;
-                        }
-                    }
-                }
-            },
-            Operations::MoveDown => {
-                let empty_tile = rooms.iter().position(|r| r == &Room::Empty).unwrap() as u8;
-                if let Some((other_tile, _)) = do_move(empty_tile, Direction::Up) {
-                    if other_tile != pos_tile {
-                        let mut rooms = rooms.clone();
-                        rooms.swap(other_tile.into(), empty_tile.into());
-                        if verify_rec(state_to_gate, RoomAndPos { rooms, pos_tile, pos_direction }, gates, counter, unreachable_entrances) {
-                            return true;
-                        }
-                    }
-                }
-            },
-            Operations::MoveRight => {
-                let empty_tile = rooms.iter().position(|r| r == &Room::Empty).unwrap() as u8;
-                if let Some((other_tile, _)) = do_move(empty_tile, Direction::Left) {
-                    if other_tile != pos_tile {
-                        let mut rooms = rooms.clone();
-                        rooms.swap(other_tile.into(), empty_tile.into());
-                        if verify_rec(state_to_gate, RoomAndPos { rooms, pos_tile, pos_direction }, gates, counter, unreachable_entrances) {
-                            return true;
-                        }
-                    }
-                }
-            },
-        }
-    }
-    false
+
+    // let beatable = verify_rec(&mut state_to_gate, pos_room, gates, &mut counter, &mut unreachable_entrances);
+
+    // println!("count: {counter}");
+    // println!("depth: {max_depth}");
+    // println!("beatable: {}", unreachable_entrances.is_empty());
+
+    Ok((counter, max_depth, unreachable_entrances.len()))
 }
 
-fn follow_chain_both<T>(rooms: &[Room; 9], gates: OpenedGates, mut tile: u8, mut direction: Direction, check: &mut impl FnMut(Entrance, u8) -> Option<T>) -> Option<T> {
+fn follow_chain_both<T>(rooms: &[Room; 9], gates: OpenedGates, tile: u8, direction: Direction, check: &mut impl FnMut(Entrance, u8) -> Option<T>) -> Option<T> {
     follow_chain(rooms, gates, tile, direction, check).or_else(|| {
         if let Some((tile, direction)) = do_move(tile, direction) {
             follow_chain(rooms, gates, tile, direction, check)

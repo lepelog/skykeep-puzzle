@@ -1,0 +1,40 @@
+Starting room:
+
+has a gate
+puzzle mover
+Bottom Door: can open gate and Reach Right Door
+Right Door: can reach bottom when gate is open
+
+Skyview Room:
+Left Door: can reach Top Door
+Top Door: can reach Left Door
+gate doesn't matter for beatability
+
+LMF Room:
+puzzle mover
+Bottom Door: Can reach Top
+Top: Can reach bottom
+
+Earth Temple:
+gate (can be opened from the bottom)
+puzzle mover (only when gate open)
+Right needs gate to reach bottom
+Bottom can reach right
+
+Mini Boss:
+has a "gate"
+puzzle mover freely accessible
+Bottom to left
+Left to Bottom (needs gate)
+
+Ancient Cistern
+Right
+Bottom
+
+Fire Sanctuary:
+has a gate
+Left to right needs gate
+Right
+
+Sandship:
+Left
